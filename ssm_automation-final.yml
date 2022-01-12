@@ -1,0 +1,146 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  EC2BuilderAutomation:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Automation
+      Content:
+        schemaVersion: "0.3"
+        description: "Image Builder pipeline orchestration"
+        parameters:
+          ImageBuilderPipelineArn:
+            description: (Required) Corresponding EC2 Image Builder Pipeline to execute.
+            type: String
+          PipelineApproverArn:
+            description: (Required) Arn of the Role that must approve the built image.
+            type: StringList
+          SnsNotificationArn:
+            description: (Required) Arn of the SNS topics for notifications.
+            type: String
+          ResourceShareArn:
+            description: (Optional) Arn of the resource share to use to share EC2 Builder images.
+            type: String
+          AMIPrincipals:
+            description: (Optional) The EC2 AMI will be shared with this list of principals. Enter Account IDs.
+            type: StringList
+
+        mainSteps:
+          - name: executeImageCreation #Step 1 - Launch the pipeline
+            action: aws:executeAwsApi
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: Abort
+            inputs:
+              Service: imagebuilder
+              Api: StartImagePipelineExecution
+              imagePipelineArn: '{{ ImageBuilderPipelineArn }}'
+            outputs:
+            - Name: imageBuildVersionArn
+              Selector: $.imageBuildVersionArn
+              Type: String
+            nextStep: waitImageBuildingComplete
+
+          - name: waitImageBuildingComplete #Step 2 - Wait for the image to be in the status "AVAILABLE" or "FAILED"
+            action: aws:waitForAwsResourceProperty
+            maxAttempts: 2
+            timeoutSeconds: 7200
+            onFailure: Abort
+            inputs:
+              Service: imagebuilder
+              Api: GetImage
+              imageBuildVersionArn: '{{ executeImageCreation.imageBuildVersionArn }}'
+              PropertySelector: image.state.status
+              DesiredValues: 
+                - AVAILABLE
+                - FAILED
+            nextStep: getBuildStatus
+
+          - name: getBuildStatus #Step 3 - Get the status of the built image. It can be FAILED or AVAILABLE
+            action: aws:executeAwsApi
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: Abort
+            inputs:
+              Service: imagebuilder
+              Api: GetImage
+              imageBuildVersionArn: '{{ executeImageCreation.imageBuildVersionArn }}'
+            outputs:
+            - Name: status
+              Selector: $.image.state.status
+            nextStep: continueIfImageAvailable
+
+          - name: continueIfImageAvailable #Step 4 - Continue the process or, go directly to the last step
+            action: aws:branch
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: Abort
+            inputs:
+              Choices:
+              - NextStep: waitForAdministratorApproval
+                Variable: '{{getBuildStatus.status}}'
+                StringEquals: AVAILABLE
+              Default:
+                postProcessing
+
+          - name: waitForAdministratorApproval #Step 5 - Wait administrator to approve the newly built image
+            action: aws:approve
+            timeoutSeconds: 604800 #7 days
+            maxAttempts: 2
+            onFailure: Abort
+            inputs:
+              NotificationArn: '{{ SnsNotificationArn }}'
+              Message: "Approval request for Core Golden AMI"
+              MinRequiredApprovals: 1
+              Approvers: '{{ PipelineApproverArn }}'
+            nextStep: getBuiltImage
+
+          - name: getBuiltImage #Step 6 - Get the ID of the newly created image
+            action: aws:executeAwsApi
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: Abort
+            inputs:
+              Service: imagebuilder
+              Api: GetImage         
+              imageBuildVersionArn: '{{ executeImageCreation.imageBuildVersionArn }}'
+            outputs:
+            - Name: imageId
+              Selector: $.image.outputResources.amis[0].image
+              Type: String
+
+          - name: shareEC2BuilderImage #Step 7 - Share the EC2 Builder Source Image with the defined list of principals, using Resource access Manager. 
+            action: aws:executeAwsApi
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: step:shareEC2AMIImage
+            inputs:
+              Service: ram
+              Api: AssociateResourceShare
+              resourceShareArn: '{{ ResourceShareArn }}'
+              resourceArns: ['{{ executeImageCreation.imageBuildVersionArn }}']
+
+          - name: shareEC2AMIImage #Step 8 - Give launch permission to the defined list of principals. 
+            action: aws:executeAwsApi
+            maxAttempts: 2
+            timeoutSeconds: 1800
+            onFailure: step:postProcessing
+            inputs:
+              Service: ec2
+              Api: ModifyImageAttribute
+              ImageId: '{{ getBuiltImage.imageId }}'
+              OperationType: add
+              Attribute: launchPermission
+              UserIds: ['{{ AMIPrincipals }}']
+
+          - name: postProcessing #Step 9 Send a notification with a summary of the operation
+            action: 'aws:executeAwsApi'
+            inputs:
+              Service: sns
+              Api: Publish
+              Subject: 'Golden Image Automation Runbook Ended in {{ global:REGION }}'
+              Message: 'The automation runbook {{ automation:EXECUTION_ID }} completed at {{ global:DATE_TIME }}. '
+              TopicArn: '{{ SnsNotificationArn }}'
+

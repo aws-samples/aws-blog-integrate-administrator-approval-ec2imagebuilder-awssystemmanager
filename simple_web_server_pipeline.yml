@@ -1,0 +1,171 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  PipelineTag:
+    Type: String
+    Default: "automation-ec2pipeline"
+    Description: Tag applied to EC2 instances created by the pipeline. It is used by the template to scope down broad permissions to those resources.
+  CustomSubnetId:
+    Type: String
+    Default: ""
+    Description: If you do not have a default VPC, or want to use a different VPC, specify the ID of a subnet in which to place the instance used to customize your EC2 AMI. If not specified, a subnet from your default VPC will be used.
+  CustomSecurityGroupId:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Required if you specified a custom subnet ID. Comma-delimted list of one or more IDs of security groups belonging to the VPC to associate with the instance used to customize your EC2 AMI.
+  BuildInstanceType:
+    Type: CommaDelimitedList
+    Default: "t2.micro"
+    Description: Comma-delimited list of one or more instance types to select from when building the image. Image Builder will select a type based on availability. The supplied default is compatible with the AWS Free Tier.
+
+Conditions:
+  UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
+
+Resources:
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager and EC2 Image Builder the necessary permissions to build an image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess
+      Policies:
+        - PolicyName: ec2builderInline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ssm:SendCommand'
+                  - 'ec2:CreateTags'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceTag/owner': ec2builder-pipeline
+              - Effect: Allow
+                Action: 
+                  - 'ssm:SendCommand'
+                Resource: 'arn:aws:ssm:*::document/AmazonInspector-ManageAWSAgent'                                    
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: "2012-10-17"
+      Path: /executionServiceEC2Role/
+
+  # To pass the InstanceRole to an EC2 instance, we need an InstanceProfile.
+  # This profile will be used during the image build process.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - Ref: InstanceRole
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
+  TomcatImageInfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: LinuxServer-Image-Infrastructure-Configuration
+      InstanceProfileName:
+        Ref: InstanceProfile
+      # Set of one or more instance types to use when building the instance. Image Builder will select a type
+      # based on availability.
+      InstanceTypes:
+        Ref: BuildInstanceType
+      # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
+      # security groups to be associated with the build instance.
+      SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref "AWS::NoValue" ]
+      SecurityGroupIds:
+        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
+      ResourceTags:
+        owner: 'ec2builder-pipeline'
+
+  # Create a custom EC2 Image Builder component that downloads and installs the latest .NET 5 preview. The component includes a
+  # validation step which will run after the install but before the image capture. Also included, is a test step which
+  # runs after the image is captured.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html
+  InstallTomcatComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: Tomcat
+      Version: 0.0.1
+      Description: Install Tomcat.
+      ChangeDescription: First version
+      Platform: Linux
+      Data: |
+        name: InstallTomcat
+        description: Downloads and Installs Tomcat
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallSoftware
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - sudo yum update -y
+                    - sudo yum install -y java-1.8.0
+                    - sudo amazon-linux-extras install -y tomcat8.5
+                    - sudo yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm
+                    - sudo yum install -y mysql-community-server
+              
+              - name: ConfigureTomcat
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - echo "Configure Tomcat Here"
+                    - sudo systemctl start tomcat
+                    - sudo systemctl enable tomcat
+              
+              - name: ConfigureMySQL
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - echo "Configure MySQL Here"
+                    - sudo systemctl start mysqld
+                    - sudo systemctl enable mysqld
+
+  # Recipe which references the latest version of Amazon Linux.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
+  TomcatServerImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: TomcatServer
+      Version: 0.0.1
+      # ${AWS::Partition} returns the partition where you are running the CloudFormation template. For standard AWS regions, the
+      # partition is aws. For resources elsewhere, the partition is aws-partitionname. For example, China (Beijing and Ningxia)
+      # regions use aws-cn and AWS GovCloud (US) regions are aws-us-gov.
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html
+      ParentImage:
+        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2-x86/x.x.x
+      Components:
+        - ComponentArn:
+            Ref: InstallTomcatComponent
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
+
+  AmazonLinux2WithTomcat:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties: 
+      Description: "Core AMI pipeline"
+      ImageRecipeArn:
+        Ref: TomcatServerImageRecipe
+      InfrastructureConfigurationArn:
+        Ref: TomcatImageInfrastructureConfiguration
+      Name: "Tomcat AMI pipeline"
+      Status: "ENABLED"
