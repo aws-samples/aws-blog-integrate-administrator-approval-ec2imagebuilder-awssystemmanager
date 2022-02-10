@@ -146,7 +146,7 @@ Resources:
       Components:
         - ComponentArn:
             Ref: InstallTomcatComponent
-#        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
 
   AmazonLinux2WithTomcat:
     Type: AWS::ImageBuilder::ImagePipeline
