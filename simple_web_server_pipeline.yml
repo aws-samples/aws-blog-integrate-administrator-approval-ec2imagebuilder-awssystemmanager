@@ -3,10 +3,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Parameters:
-  PipelineTag:
-    Type: String
-    Default: "automation-ec2pipeline"
-    Description: Tag applied to EC2 instances created by the pipeline. It is used by the template to scope down broad permissions to those resources.
   CustomSubnetId:
     Type: String
     Default: ""
@@ -50,7 +46,7 @@ Resources:
                 Resource: '*'
                 Condition:
                   StringEquals:
-                    'aws:ResourceTag/owner': ec2builder-pipeline
+                    'aws:ResourceTag/owner': golden-ami-automation
               - Effect: Allow
                 Action: 
                   - 'ssm:SendCommand'
@@ -94,7 +90,7 @@ Resources:
       SecurityGroupIds:
         - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
       ResourceTags:
-        owner: 'ec2builder-pipeline'
+        owner: 'golden-ami-automation'
 
   # Create a custom EC2 Image Builder component that downloads and installs the latest .NET 5 preview. The component includes a
   # validation step which will run after the install but before the image capture. Also included, is a test step which
@@ -120,26 +116,19 @@ Resources:
                 inputs:
                   commands:
                     - sudo yum update -y
-                    - sudo yum install -y java-1.8.0
-                    - sudo amazon-linux-extras install -y tomcat8.5
-                    - sudo yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm
-                    - sudo yum install -y mysql-community-server
+                    - echo "Configure Installation steps here"
               
               - name: ConfigureTomcat
                 action: ExecuteBash
                 inputs:
                   commands:
-                    - echo "Configure Tomcat Here"
-                    - sudo systemctl start tomcat
-                    - sudo systemctl enable tomcat
+                    - echo "Configure and start Tomcat Here"
               
               - name: ConfigureMySQL
                 action: ExecuteBash
                 inputs:
                   commands:
-                    - echo "Configure MySQL Here"
-                    - sudo systemctl start mysqld
-                    - sudo systemctl enable mysqld
+                    - echo "Configure and start MySQL Here"
 
   # Recipe which references the latest version of Amazon Linux.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
@@ -157,7 +146,7 @@ Resources:
       Components:
         - ComponentArn:
             Ref: InstallTomcatComponent
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
+#        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
 
   AmazonLinux2WithTomcat:
     Type: AWS::ImageBuilder::ImagePipeline

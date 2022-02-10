@@ -3,6 +3,50 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Resources:
+
+  AutomationRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by System Manager when executing the automation.
+    Properties:
+      Policies:
+        - PolicyName: ssmAutomationInline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ram:AssociateResourceShare'
+                  - 'sns:Publish'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceTag/owner': golden-ami-automation
+              - Effect: Allow
+                Action: 
+                  - 'ec2:ModifyImageAttribute'
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}::image/*'                                    
+              - Effect: Allow
+                Action: 
+                  - 'imagebuilder:GetImage'
+                Resource: !Sub 'arn:aws:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/*'                                    
+              - Effect: Allow
+                Action: 
+                  - 'imagebuilder:StartImagePipelineExecution'
+                Resource: !Sub 'arn:aws:imagebuilder:${AWS::Region}:${AWS::AccountId}:image-pipeline/*'                                    
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ssm.amazonaws.com
+        Version: "2012-10-17"
+      Path: /executionServiceSSMRole/
+
+
+
   EC2BuilderAutomation:
     Type: AWS::SSM::Document
     Properties:
@@ -10,6 +54,7 @@ Resources:
       Content:
         schemaVersion: "0.3"
         description: "Image Builder pipeline orchestration"
+        assumeRole: !GetAtt AutomationRole.Arn
         parameters:
           ImageBuilderPipelineArn:
             description: (Required) Corresponding EC2 Image Builder Pipeline to execute.
@@ -21,10 +66,10 @@ Resources:
             description: (Required) Arn of the SNS topics for notifications.
             type: String
           ResourceShareArn:
-            description: (Optional) Arn of the resource share to use to share EC2 Builder images.
+            description: (Optional) Arn of the resource share to use to share EC2 Builder images. Used in Step 7. If not necessary, this parameter Can be removed along with the corresponding step.
             type: String
           AMIPrincipals:
-            description: (Optional) The EC2 AMI will be shared with this list of principals. Enter Account IDs.
+            description: (Optional) The EC2 AMI will be shared with this list of principals. Enter Account IDs. Used in Step 8. If not necessary, this parameter Can be removed along with the corresponding step.
             type: StringList
 
         mainSteps:
@@ -141,6 +186,6 @@ Resources:
               Service: sns
               Api: Publish
               Subject: 'Golden Image Automation Runbook Ended in {{ global:REGION }}'
-              Message: 'The automation runbook {{ automation:EXECUTION_ID }} completed at {{ global:DATE_TIME }}. '
+              Message: 'The automation runbook {{ automation:EXECUTION_ID }} completed at {{ global:DATE_TIME }} - Image build : {{ getBuildStatus.status }} '
               TopicArn: '{{ SnsNotificationArn }}'
 
