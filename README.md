@@ -6,7 +6,7 @@ This repository contains two CloudFormation templates that support an AWS Blog P
 Since there is resource sharing involved, you must be careful on how you define your resources, and check inputs in order to avoid sharing a resources with an unauthorized principal.
 
 # simple_web_server_pipeline.yml
-# Description
+## Description
 This CloudFormation template creates an EC2 Image Builder pipeline. When launched, the pipeline will build an Amazon Machine Image (AMI) that will be tested for vulnerabilities with Amazon Inspector. Be aware that the AMI is not production ready, and is provided as an example  of how you could create a Tomcat Server within a Golden AMI process. Note that all created resources that support tags will have the tags owner/golden-ami-automation. This tag is also used in Roles, when defining Conditions. If you wish to modify this tag, make sure to change all references to it.
 
 
@@ -41,12 +41,12 @@ Type: AWS::ImageBuilder::ImageRecipe
 Type: AWS::ImageBuilder::ImagePipeline  
 
 ## Outputs
-The list of outputs this template exposes:
+No outputs are exposed by this template
 
 
 
 # system_manager_automation_document.yml
-# Description
+## Description
 This CloudFormation template creates a System Manager Automation runbook that will orchestrate a process to integrate administrator approval in an EC2 Image builder pipeline, before sharing the outputs with selected principals. Be aware that the Template is not production ready. You need to remove the (optional) steps that you don't need.  Also, notice that there is no mechanims in this automation document to prevent sharing with unauthorized principals.  You must handle this before using that template in production. Ideas are discussed in the associated blog post. Note that some IAM actions are defined with the condition "StringEquals:'aws:ResourceTag/owner': golden-ami-automation" in order to further control access.  Make sure to add this tag to the SNS Topic and the RAM resources share that you provide. If you wish to change the take, ensure you replace all mention of this tag in this template.
 
 
@@ -78,7 +78,7 @@ Type: AWS::IAM::Role
 Type: AWS::SSM::Document  
 
 ## Outputs
-There is not output
+No outputs are exposed by this template
 
 
 ## Security
