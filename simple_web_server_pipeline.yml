@@ -1,6 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
+# This sample, non-production-ready template describes an EC2 Builder pipeline document.  
+# © 2022 Amazon Web Services, Inc. or its affiliates. All Rights Reserved.  
+# This AWS Content is provided subject to the terms of the AWS Customer Agreement available at  
+# http://aws.amazon.com/agreement or other written agreement between Customer and either
+# Amazon Web Services, Inc. or Amazon Web Services EMEA SARL or both.
+
 AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This CloudFormation template creates an EC2 Image Builder pipeline. When launched, the pipeline will build an Amazon Machine Image (AMI)
+  that will be tested for vulnerabilities with Amazon Inspector. Be aware that the AMI is not production ready, and is provided as an example 
+  of how you could create a Tomcat Server within a Golden AMI process.
 
 Parameters:
   CustomSubnetId:
@@ -30,10 +40,13 @@ Resources:
     Metadata:
       Comment: Role to be used by instance during image build.
     Properties:
+      Tags:
+      - Key: owner
+        Value: golden-ami-automation
       ManagedPolicyArns:
-        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
-        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess
       Policies:
         - PolicyName: ec2builderInline
           PolicyDocument:
@@ -42,11 +55,15 @@ Resources:
               - Effect: Allow
                 Action: 
                   - 'ssm:SendCommand'
-                  - 'ec2:CreateTags'
-                Resource: '*'
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
                 Condition:
                   StringEquals:
                     'aws:ResourceTag/owner': golden-ami-automation
+              - Effect: Allow
+                Action: 
+                  - 'ec2:CreateTags'
+                Resource: 
+                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
               - Effect: Allow
                 Action: 
                   - 'ssm:SendCommand'
@@ -72,6 +89,7 @@ Resources:
       Roles:
         - Ref: InstanceRole
 
+
   # Specifies the infrastructure within which to build and test your image.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
   TomcatImageInfrastructureConfiguration:
@@ -91,6 +109,9 @@ Resources:
         - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
       ResourceTags:
         owner: 'golden-ami-automation'
+      Tags:
+        owner: golden-ami-automation
+
 
   # Create a custom EC2 Image Builder component that downloads and installs the latest .NET 5 preview. The component includes a
   # validation step which will run after the install but before the image capture. Also included, is a test step which
@@ -102,6 +123,8 @@ Resources:
       Name: Tomcat
       Version: 0.0.1
       Description: Install Tomcat.
+      Tags:
+        owner: golden-ami-automation
       ChangeDescription: First version
       Platform: Linux
       Data: |
@@ -142,11 +165,13 @@ Resources:
       # regions use aws-cn and AWS GovCloud (US) regions are aws-us-gov.
       # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html
       ParentImage:
-        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2-x86/x.x.x
+        !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2-x86/x.x.x
       Components:
         - ComponentArn:
             Ref: InstallTomcatComponent
         - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/inspector-test-linux/x.x.x
+      Tags:
+        owner: golden-ami-automation
 
   AmazonLinux2WithTomcat:
     Type: AWS::ImageBuilder::ImagePipeline
@@ -158,3 +183,5 @@ Resources:
         Ref: TomcatImageInfrastructureConfiguration
       Name: "Tomcat AMI pipeline"
       Status: "ENABLED"
+      Tags:
+        owner: golden-ami-automation
