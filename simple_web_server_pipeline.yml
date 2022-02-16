@@ -11,6 +11,8 @@ Description: >
   This CloudFormation template creates an EC2 Image Builder pipeline. When launched, the pipeline will build an Amazon Machine Image (AMI)
   that will be tested for vulnerabilities with Amazon Inspector. Be aware that the AMI is not production ready, and is provided as an example 
   of how you could create a Tomcat Server within a Golden AMI process.
+  Note that all created resources that support tags will have the tags owner/golden-ami-automation. This tag is also used in Roles, when defining
+  Conditions. If you wish to modify this tag, make sure to change all references to it.
 
 Parameters:
   CustomSubnetId:
